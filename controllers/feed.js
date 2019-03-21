@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 
 const { validationResult } = require('express-validator/check');
+
+const io = require('../socket');
 const Post = require('../models/post');
 const User = require('../models/user');
 
@@ -19,6 +21,7 @@ exports.getPosts = async (req, res, next) => {
         const totalItems = await Post.find().countDocuments();            
         const posts = await Post.find()
             .populate('creator')
+            .sort({createdAt: -1})
             .skip((page - 1) * perPage)
             .limit(perPage);
         
@@ -59,13 +62,15 @@ exports.createPost = async (req, res, next) => {
             content: content,
             creator: req.userId
         });
-    newPost.save()
+
     try {
+        await newPost.save()
         const user = await User.findById(req.userId);
         user.posts.push(newPost);
-        user.save();
+        await user.save();  
         const post = await Post.findOne(newPost._id)
             .populate('creator', 'name');
+        io.getIO().emit('posts', { action: 'create', post: post })
         res.status(201).json({
             message: 'Post created successfully!',
             post: post,
@@ -122,25 +127,28 @@ exports.updatePost = async (req, res, next) => {
         throw error;
     }
 
-    const post = await Post.findById(postId);
     try {
-        if (!post) {
+        const updatedPost = await Post.findById(postId);
+        if (!updatedPost) {
             const error = new Error('Post was not found');
             error.statusCode = 404;
             throw error;
         }
-        if (post.creator.toString() !== req.userId) {
+        if (updatedPost.creator.toString() !== req.userId) {
             const error = new Error('Not authorized');
             error.statusCode = 403;
             throw error;
         }
-        if ( updatedImageUrl !== post.imageUrl ) {
+        if ( updatedImageUrl !== updatedPost.imageUrl ) {
             deleteImage(post.imageUrl);
         }
-        post.title = updatedTitle;
-        post.imageUrl = updatedImageUrl;
-        post.content = updatedContent;
-        post.save();
+        updatedPost.title = updatedTitle;
+        updatedPost.imageUrl = updatedImageUrl;
+        updatedPost.content = updatedContent;
+        await updatedPost.save();
+        const post = await Post.findOne(updatedPost._id)
+        .populate('creator', 'name');
+        io.getIO().emit('posts', { action: 'update', post: post })
         res.status(200).json({ post: post });
     } catch(err) {
         if (!err.statusCode) {
@@ -171,7 +179,8 @@ exports.deletePost = async (req, res, next) => {
 
         const user = await User.findById(req.userId);
         user.posts.pull(postId)
-        user.save();
+        await user.save();
+        io.getIO().emit('posts', { action: 'delete', post: postId});
         res.status(200).json({ message: 'Post deleted' })
     } catch(err) {
         if (!err.statusCode) {
