@@ -61,7 +61,7 @@ exports.loginUser = async (req, res, next) => {
       name: user.name,
       userId: user._id.toString()
     },
-     '~dS%`Fz2gKq[c%.g', 
+     process.env.SECRET_KEY, 
      { expiresIn: '1h' }
     );
     res.status(200)
